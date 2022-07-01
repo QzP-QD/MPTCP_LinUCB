@@ -16,6 +16,8 @@ class io_thread(threading.Thread):
     def run(self):
         fp = open(self.filename, 'rb')
         self.sock.send(bytes(self.filename, encoding='utf8'))
+
+        # 16代表一次接收到的最大数据量，返回值buff是从socket接收到的数据
         buff = self.sock.recv(16)
         print(str(buff, encoding='utf8'))
 
@@ -32,18 +34,18 @@ class env():
     """ """
 
     def __init__(self, fd, buff_size, time, k, l, n, p):
-        self.fd = fd
+        self.fd = fd    # 套接字文件描述符
         self.buff_size = buff_size
-        self.k = k  ##对以往k个时间段的观测
+        self.k = k  ##对以往k个时间段的观测——一个state包含k个时间片
         self.l = l  ##吞吐量的奖励因子
         # self.m = m  ##RTT惩罚因子
         self.n = n  ##缓冲区膨胀惩罚因子
         self.p = p  ##重传惩罚因子
         self.time = time
         self.last = []
-        self.tp = [[], []]
-        self.rtt = [[], []]
-        self.cwnd = [[], []]
+        self.tp = [[], []]      # 两个传输路径的tp？？？
+        self.rtt = [[], []]     # 两个传输路径的rtt
+        self.cwnd = [[], []]    # 两个传输路径的拥塞窗口
         self.rr = 0
         self.count = 1
         self.recv_buff_size = 0
@@ -75,18 +77,25 @@ class env():
     """ reset env, return the initial state  """
 
     def reset(self):
+        # 对套接字进行了一些设置
         mpsched.persist_state(self.fd)
         time.sleep(1)
+
+        # 返回这个socket发送之后，所需要的各个子流的特征信息
         self.last = mpsched.get_sub_info(self.fd)
 
         for i in range(self.k):
-            subs = mpsched.get_sub_info(self.fd)
+            # 遍历这k个时间片——一个state内
+
+            subs = mpsched.get_sub_info(self.fd)    # 返回fd对应的socket连接的子流信息
             for j in range(len(subs)):
                 self.tp[j].append(subs[j][0] - self.last[j][0])
                 self.rtt[j].append(subs[j][1] - self.last[j][1])
                 self.cwnd[j].append(subs[j][2])
             self.last = subs
             time.sleep(self.time)
+
+        # 获取未确认数和重传数
         mate = mpsched.get_meta_info(self.fd)
         self.recv_buff_size = mate[0]
         self.rr = mate[1]
@@ -117,15 +126,15 @@ def main():
     SIZE = cfg.getint('env', 'buffer_size')
     TIME = cfg.getfloat('env', 'time')
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # AF_INET使用IPv4套接字类型
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)    # 新建socket对象，AF_INET使用IPv4套接字类型
     sock.connect((IP, PORT))    # 连接到这个端口
     fd = sock.fileno()          # 套接字的文件描述符
-    io = io_thread(sock=sock, filename=FILE, buffer_size=SIZE)  #
+    io = io_thread(sock=sock, filename=FILE, buffer_size=SIZE)  # 新建io线程，使用socket建立连接，使用SIZE大小的缓冲区发送文件FILE
 
     # 对套接字进行了一些设置
     mpsched.persist_state(fd)
 
-    io.start()
+    io.start()  # 开启传输线程，传输文件
     my_env = env(fd=fd, buff_size=SIZE, time=TIME, k=4, l=0.01, n=0.03, p=0.05)
 
     state = my_env.reset()
